@@ -1,92 +1,30 @@
+// bot.js
 require('dotenv').config()
 const tmi = require('tmi.js');
 const { Configuration, OpenAIApi } = require("openai");
 const https = require('https');
+const fs = require('fs'); // Import fs module for reading files
+const {encode} = require('gpt-3-encoder'); // Import encode function
 
 const oauthToken = process.env.TWITCH_ACCESS_TOKEN;
-/*
-// Your app's registered client ID and client secret.
-const clientId = process.env.TWITCH_CLIENT_ID;
-const clientSecret = process.env.TWITCH_CLIENT_SECRET;
-const grantType = 'client_credentials';
 
-// Options for the HTTPS POST request to get the OAuth token.
-const postOptions = {
-  hostname: 'id.twitch.tv',
-  path: '/oauth2/token',
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/x-www-form-urlencoded',
-  }
-};
-
-// Scopes required for the bot.
-const scopes = 'chat:read+chat:edit';
-// Create a new HTTPS POST request.
-let req = https.request(postOptions, function(res) {
-  let body = '';
-
-  res.on('data', function(chunk) {
-    body += chunk;
-  });
-
-  res.on('end', function() {
-    let twitchResponse = JSON.parse(body);
-    let token = twitchResponse.access_token;
-    console.log(twitchResponse);
-    // Create bot with OAuth token.
-	validateToken(token);
-  });
-});
-
-// Send the POST data (client ID, client secret, and grant type).
-req.write(`client_id=${clientId}&client_secret=${clientSecret}&grant_type=${grantType}&scope=${scopes}`);
-// End the request.
-req.end();
-
-function validateToken(token){
-	// Options for the HTTPS POST request to get the OAuth token.
-	const postOptions2 = {
-	  hostname: 'id.twitch.tv',
-	  path: '/oauth2/validate',
-	  method: 'GET',
-	  headers: {
-		'Content-Type': 'application/x-www-form-urlencoded',
-		'Authorization': 'OAuth ' + token
-	  }
-	};
-
-	// Create a new HTTPS POST request.
-	let req2 = https.request(postOptions2, function(res) {
-	  let body = '';
-
-	  res.on('data', function(chunk) {
-		body += chunk;
-	  });
-
-	  res.on('end', function() {
-		let twitchResponse = JSON.parse(body);
-		console.log(twitchResponse);
-		createBot(token);
-	  });
-	});
-	req2.end();
-}
-*/
-
-const configuration = new Configuration({
+const openaiConfig = new Configuration({
   apiKey: process.env.OPENAI_API_KEY,
   organization: process.env.OPENAI_API_ORG,
 });
+const openai = new OpenAIApi(openaiConfig);
 
-const openai = new OpenAIApi(configuration);
+// Read first system message from file
+const systemMessage = fs.readFileSync('jobu-system-message.txt', 'utf8');
+
+let chatHistory = []; // To keep track of chat history
 
 function createBot(token) {
 	console.log(token);
 	// Define configuration options
 	const opts = {
 	  identity: {
-		username: 'mochitupaki',
+		username: 'jobutupakibot',
 		password: `oauth:${token}`
 	  },
 	  channels: [
@@ -111,30 +49,56 @@ function createBot(token) {
 	async function onMessageHandler (target, context, msg, self) {
 	  if (self) { return; } // Ignore messages from the bot
 
-	  // Remove whitespace from chat message
 	  const commandName = msg.trim();
 
 	  // If the command is known, let's execute it
-	  if (commandName.startsWith('!jobu')) {
+	  if (commandName == '!jobu reset'){
+		  chatHistory = [];
+		  chatHistory.push({role: "system", content: "A user has done the \"!jobu reset\" command, which is when your memory is reset to just the first system message. Any quippy remarks you'd like to add to the default \"{memory reset}\" message?"});
+		  chatHistory.push({role: "assistant", content: "Jobu: Ah, the old \"!jobu reset\" command, a classic way to wipe the slate clean and plunge us back into the beautiful chaos of the unknown. Well, my friend, with a flick of my multiversal wrist and a hearty chuckle, I present to you..."});
+		  const response = await openai.createChatCompletion({
+		    model: "gpt-3.5-turbo",
+		    messages: [
+              {role: "system", content: systemMessage}, // Load system message from file
+              ...chatHistory // Spread the chat history into the messages array
+		    ],
+		    max_tokens: 50
+		  });
+		  const botMessage = response.data.choices[0].message.content;
+		  client.say(target, botMessage);
+		  console.log(`* Executed ${commandName} command`);
+		  chatHistory = [];
+	  }
+	  else if (commandName.startsWith('!jobu')) {
 		const userMessage = commandName.slice(5).trim(); // Remove '!chat' from the message
+
+        // Add the current user's message to the history
+        chatHistory.push({role: "user", content: userMessage});
+        // Prune the chat history to fit within the token limit
+        while (encode(chatHistory.map(m => m.content).join(' ')).length > 4000-encode(systemMessage)) {
+          chatHistory.shift();
+        }
+
 		const response = await openai.createChatCompletion({
 		  model: "gpt-3.5-turbo",
 		  messages: [
-			{role: "user", content: userMessage}
-		  ]
+            {role: "system", content: systemMessage}, // Load system message from file
+            ...chatHistory // Spread the chat history into the messages array
+		  ],
+		  max_tokens: 96
 		});
 		const botMessage = response.data.choices[0].message.content;
+		chatHistory.push({role: "assistant", content: botMessage}); // Add bot's message to the history
+
+        // Prune the chat history again to fit within the token limit
+        while (encode(chatHistory.map(m => m.content).join(' ')).length > 4000-encode(systemMessage)) {
+          chatHistory.shift();
+        }
+
 		client.say(target, botMessage);
 		console.log(`* Executed ${commandName} command`);
-	  } else if (commandName === '!dice') {
-		const num = rollDice();
-		client.say(target, `You rolled a ${num}`);
-		console.log(`* Executed ${commandName} command`);
-	  } else {
-		console.log(`* Unknown command ${commandName}`);
 	  }
 	}
-
 	// Function called when the "dice" command is issued
 	function rollDice () {
 	  const sides = 6;
