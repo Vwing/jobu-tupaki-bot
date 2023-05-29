@@ -16,6 +16,7 @@ const openai = new OpenAIApi(openaiConfig);
 const systemMessage = fs.readFileSync('jobu-system-message.txt', 'utf8');
 
 let chatHistory = [];
+let resetTimer;
 
 function createBot(token) {
 	const opts = {
@@ -40,6 +41,9 @@ function createBot(token) {
 	async function onMessageHandler (target, context, msg, self) {
 	  if (self) { return; } // Ignore messages from the bot
 
+	  clearTimeout(resetTimer); // Clear the existing timer
+	  resetTimer = setTimeout(resetChatSilently, 30 * 60 * 1000); // Set a new timer
+
 	  const commandName = msg.trim();
 
 	  if (commandName == '!jobu reset'){
@@ -52,6 +56,7 @@ function createBot(token) {
 
 	function onConnectedHandler (addr, port) {
 	  console.log(`* Connected to ${addr}:${port}`);
+	  resetTimer = setTimeout(resetChatSilently, 30 * 60 * 1000); // Set an initial timer
 	}
 
 	async function resetChat(target) {
@@ -66,6 +71,12 @@ function createBot(token) {
 		chatHistory = [];
 	}
 
+	async function resetChatSilently() {
+		if (chatHistory.length){
+			console.log("No commands received in 30 minutes. Resetting chat history.");
+			chatHistory = [];
+		}
+	}
 	async function handleChat(target, userMessage) {
 		chatHistory.push({role: "user", content: userMessage});
 
